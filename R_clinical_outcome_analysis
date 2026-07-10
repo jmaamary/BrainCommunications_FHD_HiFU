@@ -40,7 +40,7 @@ library(emmeans)
 # 2. Import data
 ###############################################################################
 
-df <- read_sav("/Users/joel/Desktop/PhD/Results/Statistics/Master_sheet_LF.sav")
+df <- read_sav("data/Master_sheet_LF.sav")
 
 
 ###############################################################################

@@ -1,0 +1,234 @@
+###############################################################################
+# Longitudinal RMT and AMT analysis
+#
+# This script reproduces the longitudinal analyses of resting motor threshold
+# (RMT) and active motor threshold (AMT) following paired associative
+# stimulation (PAS).
+#
+# The same workflow is used for both threshold measures.
+###############################################################################
+
+#==============================================================================
+# Load packages
+#==============================================================================
+
+library(readr)
+library(dplyr)
+library(tidyr)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+
+#==============================================================================
+# Import data
+#==============================================================================
+
+df <- read_csv(
+  "data/Neurophys_intervention.csv",
+  na = c("", ".", "NA")
+)
+
+#==============================================================================
+# Function to analyse one threshold measure
+#==============================================================================
+
+analyse_threshold <- function(data,
+                              outcome_name,
+                              pre,
+                              post0,
+                              post15,
+                              post30) {
+  
+  cat("\n====================================================\n")
+  cat(outcome_name, "\n")
+  cat("====================================================\n\n")
+  
+  #########################################################################
+  # Reshape to long format
+  #########################################################################
+  
+  long_df <- data %>%
+    transmute(
+      record_id,
+      Time,
+      
+      Pre    = .data[[pre]],
+      Post0  = .data[[post0]],
+      Post15 = .data[[post15]],
+      Post30 = .data[[post30]]
+    ) %>%
+    pivot_longer(
+      cols = c(Pre, Post0, Post15, Post30),
+      names_to = "Condition",
+      values_to = "Threshold"
+    ) %>%
+    filter(!is.na(Threshold)) %>%
+    mutate(
+      
+      record_id = factor(record_id),
+      
+      Time = factor(
+        Time,
+        levels = c(0,1,3,12),
+        labels = c(
+          "Baseline",
+          "1M",
+          "3M",
+          "12M"
+        )
+      ),
+      
+      Condition = factor(
+        Condition,
+        levels = c(
+          "Pre",
+          "Post0",
+          "Post15",
+          "Post30"
+        )
+      )
+      
+    )
+  
+  #########################################################################
+  # Mixed-effects model
+  #########################################################################
+  
+  model <- lmer(
+    
+    Threshold ~
+      
+      Time *
+      Condition +
+      
+      (1 | record_id),
+    
+    data = long_df,
+    
+    REML = TRUE
+    
+  )
+  
+  cat("\nMixed-effects model\n\n")
+  
+  print(summary(model))
+  
+  #########################################################################
+  # Estimated marginal means
+  #########################################################################
+  
+  emm <- emmeans(
+    model,
+    ~ Condition | Time
+  )
+  
+  emm_table <- as.data.frame(
+    confint(emm)
+  )
+  
+  cat("\nEstimated marginal means\n\n")
+  
+  print(emm_table)
+  
+  #########################################################################
+  # Average PAS effect
+  #########################################################################
+  
+  average_post <- list(
+    
+    "Average Post - Pre" = c(
+      -1,
+      1/3,
+      1/3,
+      1/3
+    )
+    
+  )
+  
+  average_contrast <- contrast(
+    
+    emm,
+    
+    method = average_post,
+    
+    adjust = "none"
+    
+  )
+  
+  average_results <- as.data.frame(
+    
+    summary(
+      average_contrast,
+      infer = c(TRUE, TRUE)
+    )
+    
+  )
+  
+  cat("\nAverage Post - Pre contrast\n\n")
+  
+  print(average_results)
+  
+  #########################################################################
+  # Individual contrasts
+  #########################################################################
+  
+  pairwise_contrasts <- contrast(
+    
+    emm,
+    
+    method = "trt.vs.ctrl",
+    
+    ref = "Pre",
+    
+    adjust = "none"
+    
+  )
+  
+  pairwise_results <- as.data.frame(
+    
+    summary(
+      pairwise_contrasts,
+      infer = c(TRUE, TRUE)
+    )
+    
+  )
+  
+  cat("\nPost0 / Post15 / Post30 versus Pre\n\n")
+  
+  print(pairwise_results)
+  
+}
+
+#==============================================================================
+# Resting Motor Threshold
+#==============================================================================
+
+analyse_threshold(
+  
+  data = df,
+  
+  outcome_name = "Resting Motor Threshold (RMT)",
+  
+  pre    = "pre_apb_rmt",
+  post0  = "post_apb_rmt",
+  post15 = "post_apb_rmt_15",
+  post30 = "post_apb_rmt_30"
+  
+)
+
+#==============================================================================
+# Active Motor Threshold
+#==============================================================================
+
+analyse_threshold(
+  
+  data = df,
+  
+  outcome_name = "Active Motor Threshold (AMT)",
+  
+  pre    = "pre_apb_amt",
+  post0  = "post_apb_amt",
+  post15 = "post_apb_amt_15",
+  post30 = "post_apb_amt_30"
+  
+)

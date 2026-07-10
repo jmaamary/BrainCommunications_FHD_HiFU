@@ -17,13 +17,13 @@ Requirements
 R >= 4.4
 
 Packages
-lme4
-lmerTest
-glmmTMB
-emmeans
-ggplot2
-dplyr
-tidyr
-boot
-performance
-DHARMa
+- lme4
+- lmerTest
+- glmmTMB
+- emmeans
+- ggplot2
+- dplyr
+- tidyr
+- boot
+- performance
+- DHARMa

@@ -1,0 +1,461 @@
+###############################################################################
+# Longitudinal clinical outcome analysis
+#
+# This script reproduces the mixed-effects analysis used for the longitudinal
+# clinical outcomes in the manuscript.
+#
+# To analyse a different outcome, replace "ADDS" with the relevant variable
+# name throughout the clearly marked outcome-specific sections below.
+#
+# Model:
+#
+#   outcome ~ tx_effect + Time_months
+#             + (0 + tx_effect | Subject)
+#             + (1 | Subject)
+#
+# tx_effect:
+#   0 = baseline
+#   1 = post-thalamotomy
+#
+# Time_months:
+#   Continuous time in months, coded as 0, 1, 3, 6 and 12.
+###############################################################################
+
+
+###############################################################################
+# 1. Load required packages
+###############################################################################
+
+library(haven)
+library(glmmTMB)
+library(DHARMa)
+library(pbkrtest)
+library(lme4)
+library(dplyr)
+library(ggplot2)
+library(emmeans)
+
+
+###############################################################################
+# 2. Import data
+###############################################################################
+
+df <- read_sav("/Users/joel/Desktop/PhD/Results/Statistics/Master_sheet_LF.sav")
+
+
+###############################################################################
+# 3. Create analysis variables
+###############################################################################
+
+# TreatmentPhase in the source dataset is coded as:
+#
+#   0 = baseline
+#   1 = post-thalamotomy
+#
+# Time in the source dataset is coded as:
+#
+#   1 = baseline
+#   2 = 1 month
+#   3 = 3 months
+#   4 = 6 months
+#   5 = 12 months
+
+df <- df %>%
+  mutate(
+    tx_effect = TreatmentPhase,
+    
+    Time_months = case_when(
+      Time == 1 ~ 0,
+      Time == 2 ~ 1,
+      Time == 3 ~ 3,
+      Time == 4 ~ 6,
+      Time == 5 ~ 12,
+      TRUE ~ NA_real_
+    )
+  )
+
+
+###############################################################################
+# 4. Select the clinical outcome
+###############################################################################
+
+# Replace "ADDS" with the name of the clinical outcome being analysed.
+#
+# Examples:
+#
+# outcome_name <- "MHOQ"
+# outcome_name <- "WCRS"
+# outcome_name <- "TMDS"
+
+outcome_name <- "ADDS"
+
+
+###############################################################################
+# 5. Check required variables
+###############################################################################
+
+required_variables <- c(
+  outcome_name,
+  "Subject",
+  "tx_effect",
+  "Time_months"
+)
+
+missing_variables <- setdiff(
+  required_variables,
+  names(df)
+)
+
+if (length(missing_variables) > 0) {
+  stop(
+    paste(
+      "The following required variables are missing:",
+      paste(missing_variables, collapse = ", ")
+    )
+  )
+}
+
+
+###############################################################################
+# 6. Prepare complete-case analysis dataset
+###############################################################################
+
+df_clean <- df[
+  complete.cases(df[, required_variables]),
+]
+
+df_clean$Subject <- factor(
+  df_clean$Subject
+)
+
+cat("\nOutcome:\n")
+print(outcome_name)
+
+cat("\nNumber of observations:\n")
+print(nrow(df_clean))
+
+cat("\nNumber of participants:\n")
+print(length(unique(df_clean$Subject)))
+
+cat("\nNumber of observations at each timepoint:\n")
+print(table(df_clean$Time_months))
+
+
+###############################################################################
+# 7. Create the model formula
+###############################################################################
+
+model_formula <- as.formula(
+  paste0(
+    outcome_name,
+    " ~ ",
+    "(0 + tx_effect | Subject) + ",
+    "(1 | Subject) + ",
+    "tx_effect + ",
+    "Time_months"
+  )
+)
+
+
+###############################################################################
+# 8. Fit the primary mixed-effects model
+###############################################################################
+
+model_primary <- glmmTMB(
+  model_formula,
+  data = df_clean,
+  REML = TRUE
+)
+
+cat("\nPrimary mixed-effects model:\n")
+print(
+  summary(model_primary)
+)
+
+
+###############################################################################
+# 9. Residual diagnostics
+###############################################################################
+
+# DHARMa simulation-based residual diagnostics were used to assess model fit.
+
+set.seed(2026)
+
+model_residuals <- simulateResiduals(
+  model_primary
+)
+
+plot(
+  model_residuals
+)
+
+
+###############################################################################
+# 10. Fixed-effect confidence intervals
+###############################################################################
+
+fixed_effect_confidence_intervals <- confint(
+  model_primary,
+  parm = "beta_",
+  level = 0.95,
+  method = "wald"
+)
+
+cat("\nFixed-effect 95% confidence intervals:\n")
+print(
+  fixed_effect_confidence_intervals
+)
+
+
+###############################################################################
+# 11. Overall treatment effect
+###############################################################################
+
+treatment_emmeans <- emmeans(
+  model_primary,
+  specs = "tx_effect",
+  scale = "response"
+)
+
+cat("\nEstimated marginal means by treatment phase:\n")
+print(
+  treatment_emmeans
+)
+
+treatment_contrast <- contrast(
+  treatment_emmeans,
+  method = "revpairwise"
+)
+
+cat("\nTreatment-phase contrast:\n")
+print(
+  treatment_contrast
+)
+
+cat("\nTreatment-phase contrast with 95% confidence interval:\n")
+print(
+  confint(
+    treatment_contrast,
+    level = 0.95
+  )
+)
+
+
+###############################################################################
+# 12. Estimated marginal means at each assessment time
+###############################################################################
+
+timepoint_emmeans <- emmeans(
+  model_primary,
+  ~ Time_months + tx_effect,
+  at = list(
+    Time_months = c(0, 1, 3, 6, 12)
+  )
+)
+
+timepoint_emmeans_df <- as.data.frame(
+  confint(
+    timepoint_emmeans,
+    level = 0.95
+  )
+)
+
+
+###############################################################################
+# 13. Retain only observed treatment-time combinations
+###############################################################################
+
+# The emmeans reference grid contains combinations of treatment status and time
+# that did not occur in the study.
+#
+# Retain:
+#
+#   baseline:
+#     tx_effect = 0 and Time_months = 0
+#
+#   post-treatment:
+#     tx_effect = 1 and Time_months = 1, 3, 6 or 12
+
+plot_data <- timepoint_emmeans_df %>%
+  filter(
+    (Time_months == 0 & tx_effect == 0) |
+      (
+        Time_months %in% c(1, 3, 6, 12) &
+          tx_effect == 1
+      )
+  ) %>%
+  arrange(
+    Time_months
+  )
+
+cat("\nEstimated marginal means at observed timepoints:\n")
+print(
+  plot_data
+)
+
+
+###############################################################################
+# 14. Plot estimated marginal means
+###############################################################################
+
+# This plot is provided to verify the model estimates.
+# The manuscript figures were generated separately in GraphPad Prism.
+#
+# Error bars represent model-based 95% confidence intervals.
+
+ggplot(
+  plot_data,
+  aes(
+    x = Time_months,
+    y = emmean
+  )
+) +
+  geom_line(
+    linewidth = 0.8
+  ) +
+  geom_point(
+    size = 3
+  ) +
+  geom_errorbar(
+    aes(
+      ymin = lower.CL,
+      ymax = upper.CL
+    ),
+    width = 0.2
+  ) +
+  geom_vline(
+    xintercept = 0.5,
+    linetype = "dashed"
+  ) +
+  scale_x_continuous(
+    breaks = c(0, 1, 3, 6, 12)
+  ) +
+  labs(
+    x = "Time following thalamotomy (months)",
+    y = paste(
+      "Estimated marginal mean",
+      outcome_name
+    ),
+    title = paste(
+      "Longitudinal",
+      outcome_name,
+      "estimates"
+    )
+  ) +
+  theme_minimal()
+
+
+###############################################################################
+# 15. Fit lmer models for parametric-bootstrap testing
+###############################################################################
+
+model_lmer_full <- lmer(
+  model_formula,
+  data = df_clean,
+  REML = TRUE
+)
+
+reduced_formula <- as.formula(
+  paste0(
+    outcome_name,
+    " ~ ",
+    "(0 + tx_effect | Subject) + ",
+    "(1 | Subject) + ",
+    "Time_months"
+  )
+)
+
+model_lmer_reduced <- lmer(
+  reduced_formula,
+  data = df_clean,
+  REML = TRUE
+)
+
+
+###############################################################################
+# 16. Parametric-bootstrap test of the treatment effect
+###############################################################################
+
+# The random seed is specified so that the bootstrap result can be reproduced.
+#
+# The exact p-value may differ slightly from an earlier analysis that was run
+# without a fixed seed.
+
+set.seed(2026)
+
+bootstrap_test <- PBmodcomp(
+  model_lmer_full,
+  model_lmer_reduced,
+  nsim = 1000
+)
+
+cat("\nParametric-bootstrap test of the treatment effect:\n")
+print(
+  bootstrap_test
+)
+
+
+###############################################################################
+# 17. Export results
+###############################################################################
+
+dir.create(
+  "results/clinical_outcomes",
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+write.csv(
+  plot_data,
+  file = paste0(
+    "results/clinical_outcomes/",
+    outcome_name,
+    "_estimated_marginal_means.csv"
+  ),
+  row.names = FALSE
+)
+
+write.csv(
+  as.data.frame(
+    fixed_effect_confidence_intervals
+  ),
+  file = paste0(
+    "results/clinical_outcomes/",
+    outcome_name,
+    "_fixed_effect_confidence_intervals.csv"
+  ),
+  row.names = TRUE
+)
+
+write.csv(
+  as.data.frame(
+    confint(
+      treatment_contrast,
+      level = 0.95
+    )
+  ),
+  file = paste0(
+    "results/clinical_outcomes/",
+    outcome_name,
+    "_treatment_contrast.csv"
+  ),
+  row.names = FALSE
+)
+
+
+###############################################################################
+# 18. Record R session information
+###############################################################################
+
+session_information <- capture.output(
+  sessionInfo()
+)
+
+writeLines(
+  session_information,
+  paste0(
+    "results/clinical_outcomes/",
+    outcome_name,
+    "_sessionInfo.txt"
+  )
+)

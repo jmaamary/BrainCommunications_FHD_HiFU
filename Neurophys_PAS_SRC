@@ -1,0 +1,152 @@
+###############################################################################
+# Stimulus–response curve (SRC) analysis
+#
+# This script reproduces the longitudinal SRC analysis reported in the
+# manuscript.
+#
+# The dependent variable is MEP amplitude (mV).
+#
+# Fixed effects:
+#   - Stimulation intensity
+#   - PAS condition (Pre vs Post)
+#   - Timepoint
+#   - All interactions
+#
+# Random effect:
+#   - Participant
+#
+# Estimated marginal trends (emtrends) are used to estimate SRC slopes and
+# compare pre- and post-PAS slopes within each timepoint.
+###############################################################################
+
+library(haven)
+library(dplyr)
+library(stringr)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+
+###############################################################################
+# Load data
+###############################################################################
+
+df <- read_sav(
+  "/Users/joel/Desktop/PhD/Results/Statistics/TMS/SRC_long_format.sav"
+)
+
+###############################################################################
+# Prepare variables
+###############################################################################
+
+df <- df %>%
+  mutate(
+
+    Timepoint = str_trim(Timepoint),
+
+    TimeGroup = recode(
+      Timepoint,
+      "Baseline" = "Pre",
+      "1Mo" = "1Mo",
+      "3Mo" = "3Mo",
+      "12Mo" = "12Mo"
+    ),
+
+    TimeGroup = factor(
+      TimeGroup,
+      levels = c(
+        "Pre",
+        "1Mo",
+        "3Mo",
+        "12Mo"
+      )
+    ),
+
+    Condition = factor(
+      Condition,
+      levels = c(
+        "Pre",
+        "Post"
+      )
+    ),
+
+    SubjectID = factor(SubjectID),
+
+    Intensity = as.numeric(Intensity)
+
+  )
+
+###############################################################################
+# Linear mixed-effects model
+###############################################################################
+
+model_src <- lmer(
+
+  MEPmV ~
+
+    Intensity *
+    Condition *
+    TimeGroup +
+
+    (1 | SubjectID),
+
+  data = df,
+
+  REML = TRUE
+
+)
+
+cat("\nMixed-effects model\n\n")
+
+print(summary(model_src))
+
+cat("\nType III analysis of variance\n\n")
+
+print(anova(model_src))
+
+###############################################################################
+# Estimated marginal trends (SRC slopes)
+###############################################################################
+
+src_trends <- emtrends(
+
+  model_src,
+
+  ~ Condition | TimeGroup,
+
+  var = "Intensity"
+
+)
+
+cat("\nEstimated marginal stimulus-response slopes\n\n")
+
+print(src_trends)
+
+###############################################################################
+# Pairwise comparison of pre- versus post-PAS slopes
+###############################################################################
+
+src_slope_contrasts <- contrast(
+
+  src_trends,
+
+  method = "pairwise",
+
+  reverse = TRUE,
+
+  adjust = "none"
+
+)
+
+cat("\nPre- versus post-PAS slope contrasts\n\n")
+
+print(
+
+  summary(
+
+    src_slope_contrasts,
+
+    infer = c(TRUE, TRUE)
+
+  )
+
+)

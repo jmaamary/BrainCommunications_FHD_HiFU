@@ -1,0 +1,277 @@
+###############################################################################
+#
+# Longitudinal analysis of paired associative stimulation (PAS)-induced
+# motor evoked potentials (MEPs)
+#
+# This script reproduces the mixed-effects analyses used for the
+# longitudinal neurophysiology outcomes reported in the manuscript.
+#
+# Publication-quality figures were generated separately in GraphPad Prism
+# using the exported estimated marginal means.
+#
+###############################################################################
+
+###############################################################################
+# 1. Load required packages
+###############################################################################
+
+library(readr)
+library(dplyr)
+library(tidyr)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+
+###############################################################################
+# 2. Import data
+###############################################################################
+
+df <- read_csv(
+  "data/Neurophys_intervention.csv",
+  na = c("", ".", "NA")
+)
+
+###############################################################################
+# 3. Reshape to long format
+###############################################################################
+
+df_long <- df %>%
+  pivot_longer(
+    cols = c(
+      pre_apb_mep,
+      post_apb_mep_immediate,
+      post_apb_mep_15,
+      post_apb_mep_30,
+      pre_fdi_mep,
+      post_fdi_mep_immediate,
+      post_fdi_mep_15,
+      post_fdi_mep_30
+    ),
+    names_to = "variable",
+    values_to = "MEP"
+  )
+
+###############################################################################
+# 4. Create analysis variables
+###############################################################################
+
+df_long <- df_long %>%
+  mutate(
+
+    muscle = case_when(
+      grepl("apb", variable) ~ "APB",
+      grepl("fdi", variable) ~ "FDI"
+    ),
+
+    PAS_condition = case_when(
+      grepl("pre_", variable) ~ "Pre",
+      grepl("immediate", variable) ~ "Post_0",
+      grepl("15", variable) ~ "Post_15",
+      grepl("30", variable) ~ "Post_30"
+    ),
+
+    PAS_condition = factor(
+      PAS_condition,
+      levels = c(
+        "Pre",
+        "Post_0",
+        "Post_15",
+        "Post_30"
+      )
+    ),
+
+    Time_f = factor(
+      Time,
+      levels = c(0, 1, 3, 12),
+      labels = c(
+        "Baseline",
+        "1M",
+        "3M",
+        "12M"
+      )
+    ),
+
+    record_id = factor(record_id)
+
+  )
+
+###############################################################################
+# 5. Separate APB and FDI datasets
+###############################################################################
+
+df_apb <- df_long %>%
+  filter(
+    muscle == "APB"
+  )
+
+df_fdi <- df_long %>%
+  filter(
+    muscle == "FDI"
+  )
+
+###############################################################################
+# 6. Fit linear mixed-effects models
+###############################################################################
+
+mod_apb <- lmer(
+  MEP ~
+    Time_f * PAS_condition +
+    (1 | record_id),
+  data = df_apb,
+  REML = TRUE
+)
+
+mod_fdi <- lmer(
+  MEP ~
+    Time_f * PAS_condition +
+    (1 | record_id),
+  data = df_fdi,
+  REML = TRUE
+)
+
+cat("\nAPB model\n")
+summary(mod_apb)
+
+cat("\nFDI model\n")
+summary(mod_fdi)
+
+###############################################################################
+# 7. Estimated marginal means
+###############################################################################
+
+emm_apb <- emmeans(
+  mod_apb,
+  ~ Time_f * PAS_condition
+)
+
+emm_fdi <- emmeans(
+  mod_fdi,
+  ~ Time_f * PAS_condition
+)
+
+apb_emmeans <- as.data.frame(
+  confint(emm_apb)
+)
+
+fdi_emmeans <- as.data.frame(
+  confint(emm_fdi)
+)
+
+cat("\nEstimated marginal means (APB)\n")
+print(apb_emmeans)
+
+cat("\nEstimated marginal means (FDI)\n")
+print(fdi_emmeans)
+
+###############################################################################
+# 8. Average post-PAS facilitation
+###############################################################################
+
+# The manuscript reports the average of the three post-PAS measurements
+# (Post_0, Post_15 and Post_30) relative to the pre-PAS measurement
+# at each assessment timepoint.
+
+average_post <- list(
+  "Average Post - Pre" =
+    c(
+      -1,
+      1/3,
+      1/3,
+      1/3
+    )
+)
+
+average_contrast_apb <- contrast(
+  emmeans(
+    mod_apb,
+    ~ PAS_condition | Time_f
+  ),
+  method = average_post,
+  adjust = "none"
+)
+
+average_contrast_fdi <- contrast(
+  emmeans(
+    mod_fdi,
+    ~ PAS_condition | Time_f
+  ),
+  method = average_post,
+  adjust = "none"
+)
+
+apb_average_results <- as.data.frame(
+  summary(
+    average_contrast_apb,
+    infer = c(TRUE, TRUE)
+  )
+)
+
+fdi_average_results <- as.data.frame(
+  summary(
+    average_contrast_fdi,
+    infer = c(TRUE, TRUE)
+  )
+)
+
+cat("\nAverage post-PAS facilitation (APB)\n")
+print(apb_average_results)
+
+cat("\nAverage post-PAS facilitation (FDI)\n")
+print(fdi_average_results)
+
+###############################################################################
+# 9. Export results
+###############################################################################
+
+dir.create(
+  "results/neurophysiology",
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+write.csv(
+  apb_emmeans,
+  "results/neurophysiology/APB_emmeans.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  fdi_emmeans,
+  "results/neurophysiology/FDI_emmeans.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  apb_average_results,
+  "results/neurophysiology/APB_average_post_pre.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  fdi_average_results,
+  "results/neurophysiology/FDI_average_post_pre.csv",
+  row.names = FALSE
+)
+
+###############################################################################
+# 10. Save fitted models
+###############################################################################
+
+saveRDS(
+  mod_apb,
+  "results/neurophysiology/APB_model.rds"
+)
+
+saveRDS(
+  mod_fdi,
+  "results/neurophysiology/FDI_model.rds"
+)
+
+###############################################################################
+# 11. Record session information
+###############################################################################
+
+writeLines(
+  capture.output(sessionInfo()),
+  "results/neurophysiology/sessionInfo.txt"
+)
